@@ -4,11 +4,12 @@
 Dice.newすることができる文字列
 
 ```BNF
-expression := mul_div | mul_div + expression | mul_div - expression
-mul_div :=  pow | pow * mul_div | pow / mul_div
-pow := dice_int | dice_int ^ dice_int
-dice_int := int_parentheses | int_parentheses d int_parentheses
-int_parentheses := int | ( expression )
+expression := mul_div { ( "+" | "-" ) mul_div }
+mul_div :=  pow { ( "*" | "/" ) pow }
+pow := dice_int | dice_int "^" dice_int
+dice_int := int_parentheses | int_parentheses "d" int_parentheses
+int_parentheses := int | "(" expression ")"
+int := int_l | ( "+" | "-" ) int_l
 ```
 (ただし字句解析で符号付きのintは処理される)
 

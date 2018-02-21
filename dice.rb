@@ -1,19 +1,4 @@
 
-=begin
-
-Dice.newすることができる文字列
-
-expression := mul_div | mul_div + expression | mul_div - expression
-mul_div :=  pow | pow * mul_div | pow / mul_div
-pow := dice_int | dice_int ^ dice_int  # 2^2^2は成立しない。(2^2)^2または2^(2^2)と書くように。
-dice_int := int_parentheses | int_parentheses d int_parentheses # 同じく2d2d2は成立しない。(2d2)d2または2d(2d2)と書くように
-int_parentheses := int | ( expression )
-
-(ただし字句解析で符号付きのintは処理される)
-
-TODO : 最頻値、分布、標準偏差
-=end
-
 
 require "strscan"
 
@@ -206,8 +191,8 @@ module Dice
 			result = []
 			until s.eos?
 				case
-				when s.scan(/(\+|-|)\d+/)
-					result << Token.new("int", s.pos, s[0].to_i)
+				when s.scan(/\d+/)
+					result << Token.new("int_l", s.pos, s[0].to_i)
 				when s.scan(/[()+*\/^d-]/)
 					result << Token.new(s[0], s.pos, nil)
 				when s.scan(/[ 　\t\n]+/)
@@ -223,24 +208,26 @@ module Dice
 			unless left = mul_div()
 				raise ParseError.new("expressionはmul_divから始まらなければならない。", @tokens.first.pos)
 			else
-				case @tokens.first.symbol
-				when "+"
-					@tokens.shift
-					unless right = expression()
-						raise ParseError.new("+のあとはexpressionでなければならない。", @tokens.first.pos)
+				loop {
+					case @tokens.first.symbol
+					when "+"
+						@tokens.shift
+						unless right = mul_div()
+							raise ParseError.new("+のあとはexpressionでなければならない。", @tokens.first.pos)
+						else
+							left = Add.new(left, right)
+						end
+					when "-"
+						@tokens.shift
+						unless right = mul_div()
+							raise ParseError.new("-のあとはexpressionでなければならない", @tokens.first.pos)
+						else
+							left = Sub.new(left, right)
+						end
 					else
-						Add.new(left, right)
+						break left
 					end
-				when "-"
-					@tokens.shift
-					unless right = expression()
-						raise ParseError.new("-のあとはexpressionでなければならない", @tokens.first.pos)
-					else
-						Sub.new(left, right)
-					end
-				else
-					left
-				end
+				}
 			end
 		end
 		
@@ -248,24 +235,26 @@ module Dice
 			unless left = pow()
 				raise ParseError.new("mul_divはpowから始まらなければならない。", @tokens.first.pos)
 			else
-				case @tokens.first.symbol
-				when "*"
-					@tokens.shift
-					unless right = mul_div()
-						raise ParseError.new("*のあとはmul_divでなければならない。", @tokens.first.pos)
+				loop {
+					case @tokens.first.symbol
+					when "*"
+						@tokens.shift
+						unless right = pow()
+							raise ParseError.new("*のあとはmul_divでなければならない。", @tokens.first.pos)
+						else
+							left = Mul.new(left, right)
+						end
+					when "/"
+						@tokens.shift
+						unless right = pow()
+							raise ParseError.new("/のあとはmul_divでなければならない。", @tokens.first.pos)
+						else
+							left = Div.new(left, right)
+						end
 					else
-						Mul.new(left, right)
+						break left
 					end
-				when "/"
-					@tokens.shift
-					unless right = mul_div()
-						raise ParseError.new("/のあとはmul_divでなければならない。", @tokens.first.pos)
-					else
-						Div.new(left, right)
-					end
-				else
-					left
-				end
+				}
 			end
 		end
 		
@@ -310,9 +299,8 @@ module Dice
 		end
 		
 		def int_parentheses
-			if @tokens.first.symbol == "int"
-				int = @tokens.shift.data
-				Int.new(int)
+			if int = int_l
+				int
 			elsif @tokens.first.symbol == "("
 				@tokens.shift
 				unless content = expression()
@@ -327,6 +315,30 @@ module Dice
 				end
 			else
 				nil # それぞれの場所でエラー対策をしているのでそっちでメッセージを出すように
+			end
+		end
+		
+		def int_l
+			case @tokens.first.symbol
+			when "int_l"
+				int = @tokens.shift
+				Int.new(int.data)
+			when "+"
+				unless @tokens[1].symbol == "int_l"
+					# それぞれのエラー処理に任せる
+				else
+					_plas, int = @tokens.shift(2)
+					Int.new(int.data)
+				end
+			when "-"
+				unless @tokens[1].symbol == "int_l"
+					# それぞれのエラー処理に任せる
+				else
+					_minus, int = @tokens.shift(2)
+					Int.new(-int.data)
+				end
+			else
+				# それぞれのエラー処理に任せる
 			end
 		end
 	end
