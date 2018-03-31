@@ -11,7 +11,6 @@ dice_int := int_parentheses | int_parentheses "d" int_parentheses
 int_parentheses := int | "(" expression ")"
 int := int_l | ( "+" | "-" ) int_l
 ```
-(ただし字句解析で符号付きのintは処理される)
 
 2^2^2は成立しない。(2^2)^2または2^(2^2)と書くように。
 2d2d2は成立しない。(2d2)d2または2d(2d2)と書くように。
