@@ -6,6 +6,49 @@ require "strscan"
 module Dice
 	module_function
 	
+	PROBABILITY_CACHE = {}
+	MAY_BE_NEGATIVE_CACHE = {}
+	MAY_BE_ZERO_CACHE = {}
+	
+	class DiceRuntimeError < RuntimeError
+	end
+	
+	class MathematicalError < DiceRuntimeError
+	end
+	
+	class DivideZeroFromZeroError < MathematicalError
+		def to_s
+			<<~EOS
+				Divide zero from zero may occur.
+				ゼロのゼロ除算が発生する可能性があります。
+			EOS
+		end
+	end
+	class DivisionByZeroError < MathematicalError
+		def to_s
+			<<~EOS
+				Division by zero may occur.
+				ゼロ除算が発生する可能性があります。
+			EOS
+		end
+	end
+	class DiceCountIsNegativeError < MathematicalError
+		def to_s
+			<<~EOS
+				There is a possibility that the number of times you roll the dice becomes a negative number.
+				ダイズを振る回数が負の数になる可能性があります。
+			EOS
+		end
+	end
+	class DiceFacesIsNegativeError < MathematicalError
+		def to_s
+			<<~EOS
+				There is a possibility that the number of dice faces becomes a negative number.
+				ダイズの面数が負の数になる可能性があります。
+			EOS
+		end
+	end
+	
 	def new str
 		Parser.parse(str)
 	end
@@ -14,12 +57,18 @@ module Dice
 		attr_accessor :count, :faces
 		
 		def initialize count, faces
+			raise DiceCountIsNegativeError if count.may_be_negative?
+			raise DiceFacesIsNegativeError if faces.may_be_negative?
 			@count = count
 			@faces = faces
 		end
 		
 		def to_s
 			"(#{count}d#{faces})"
+		end
+		
+		def probability
+			PROBABILITY_CACHE[to_s] ||= (min..max).map{|n|[n, true]}.to_h
 		end
 		
 		def sample
@@ -38,6 +87,13 @@ module Dice
 		def median
 			(min+max)/2.0
 		end
+		
+		def may_be_zero?
+			count == 0 || faces == 0
+		end
+		def may_be_negative?
+			false
+		end
 	end
 	class Int
 		attr_accessor :num
@@ -50,6 +106,10 @@ module Dice
 			num.to_s
 		end
 		
+		def probability
+			{@num => true}
+		end
+		
 		def sample
 			@num
 		end
@@ -62,38 +122,82 @@ module Dice
 		def median
 			@num
 		end
+		
+		def may_be_zero?
+			@num.zero?
+		end
+		def may_be_negative?
+			@num.negative?
+		end
 	end
 	
-	class FourArithmeticOperations
-		attr_accessor :left, :right
+	class BinomialOperation
+		attr_reader :left, :right
 		
 		def initialize left, right
 			@left = left
 			@right = right
 		end
 		
+		def probability
+			PROBABILITY_CACHE[to_s] ||= (
+				result = {}
+				_count = 0
+				left.probability.each do |l, _|
+					right.probability.each do |r, _|
+						result[base(l, r)] = true
+						_count += 1
+					end
+				end
+				puts "probability loop count : #{_count}"
+				result
+			)
+		end
+		
 		def sample
-			base(@left.sample, @right.sample)
+			base(left.sample, right.sample)
 		end
 		def min
-			base(@left.min, @right.min)
+			base(left.min, right.min)
 		end
 		def max
-			base(@left.max, @right.max)
+			base(left.max, right.max)
 		end
 		def median
-			base(@left.median.to_f, @right.median)
+			base(left.median.to_f, right.median)
+		end
+		
+		def may_be_zero?
+			MAY_BE_ZERO_CACHE[to_s] ||= probability[0] || false
+		end
+		def may_be_negative?
+			MAY_BE_NEGATIVE_CACHE[to_s] ||= probability.keys.any?(&:negative?)
 		end
 	end
-	class Add < FourArithmeticOperations
+	class Add < BinomialOperation
 		def to_s
 			"(#{left}+#{right})"
 		end
 		private def base left, right
 			left + right
 		end
+		
+		def may_be_zero?
+			if @left.min > 0 && @right.min > 0
+				false
+			else
+				super
+			end
+		end
+		def may_be_negative?
+			if not @left.may_be_negative? || @right.may_be_negative?
+				false
+			else
+				super
+			end
+		end
 	end
-	class Sub < FourArithmeticOperations
+	class Sub < BinomialOperation
 		def to_s
 			"(#{left}-#{right})"
 		end
@@ -101,45 +205,73 @@ module Dice
 			left - right
 		end
 	end
-	class Mul < FourArithmeticOperations
+	class Mul < BinomialOperation
 		def to_s
 			"(#{left}*#{right})"
 		end
 		private def base left, right
 			left * right
 		end
+		
+		def may_be_zero?
+			if not @left.may_be_zero? || @right.may_be_zero?
+				false
+			else
+				super
+			end
+		end
+		def may_be_negative?
+			if not @left.may_be_negative? || @right.may_be_negative?
+				false
+			else
+				super
+			end
+		end
 	end
-	class Div < FourArithmeticOperations
+	class Div < BinomialOperation
+		def initialize left, right
+			raise DivideZeroFromZeroError if left.may_be_zero? && right.may_be_zero?
+			raise DivisionByZeroError if right.may_be_zero?
+			super
+		end
 		def to_s
 			"(#{left}/#{right})"
 		end
 		private def base left, right
 			left / right
 		end
-	end
-	class Pow
-		attr_accessor :base, :exponent
 		
-		def initialize base, exponent
-			@base = base
+		def may_be_negative?
+			if not @left.may_be_negative? || @right.may_be_negative?
+				false
+			else
+				super
+			end
+		end
+	end
+	class Pow < BinomialOperation
+		attr_reader :base_num, :exponent
+		alias left base_num
+		alias right exponent
+		
+		def initialize base_num, exponent
+			@base_num = base_num
 			@exponent = exponent
 		end
 		
 		def to_s
-			"(#{base}^#{exponent})"
+			"(#{base_num}^#{exponent})"
+		end
+		def base base_num, exponent
+			base_num ** exponent
 		end
 		
-		def sample
-			@base.sample ** @exponent.sample
-		end
-		def min
-			@base.min ** @exponent.min
-		end
-		def max
-			@base.max ** @exponent.max
-		end
-		def median
-			@base.median ** @exponent.median
+		def may_be_zero?
+			if not base_num.may_be_zero? || exponent.may_be_zero?
+				false
+			else
+				super
+			end
 		end
 	end
 	
@@ -147,7 +279,7 @@ module Dice
 	class Parser
 		attr_writer :tokens
 		
-		class DiceFormatError < StandardError
+		class DiceFormatError < DiceRuntimeError
 			attr_reader :pos
 			def initialize pos
 				@pos = pos
@@ -264,9 +396,9 @@ module Dice
 			else
 				if @tokens.first.symbol == "^"
 					@tokens.shift
-					unless right = dice_int()
+					unless right = pow()
 						raise ParseError.new(
-							"^のあとはdice_intでなければならない。(2^2^2は成立しない。(2^2)^2または2^(2^2)と書くように。)",
+							"^の後にpowがなければならない",
 							@tokens.first.pos,
 						)
 					else
@@ -334,7 +466,7 @@ module Dice
 				unless @tokens[1].symbol == "int_l"
 					# それぞれのエラー処理に任せる
 				else
-					_minus, int = @tokens.shift(2)
+					_negative, int = @tokens.shift(2)
 					Int.new(-int.data)
 				end
 			else
